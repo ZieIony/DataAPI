@@ -92,7 +92,9 @@ public abstract class DataAPI<User> {
 
     }
 
-    protected abstract <Type2> Type2 getInternal(final String endpoint, Class<Type2> dataClass) throws APIException;
+    protected <Type2> Type2 getInternal(final String endpoint, Class<Type2> dataClass) throws APIException {
+        throw new RuntimeException("Not implemented");
+    }
 
     public <Type> void putAsync(final String endpoint, final Type param, @Nullable final OnCallFinishedListener<Type> listener) {
         addTask(new Runnable() {
@@ -114,7 +116,9 @@ public abstract class DataAPI<User> {
         return putInternal(endpoint, param);
     }
 
-    public abstract <Type> Type putInternal(final String endpoint, final Type param) throws APIException;
+    public <Type> Type putInternal(final String endpoint, final Type param) throws APIException {
+        throw new RuntimeException("Not implemented");
+    }
 
     public <Type> void deleteAsync(final String endpoint, @Nullable final OnCallFinishedListener<Type> listener) {
         addTask(new Runnable() {
@@ -136,14 +140,16 @@ public abstract class DataAPI<User> {
         deleteInternal(endpoint);
     }
 
-    protected abstract void deleteInternal(final String endpoint) throws APIException;
+    protected void deleteInternal(final String endpoint) throws APIException {
+        throw new RuntimeException("Not implemented");
+    }
 
-    public <Type, Type2> void postAsync(final String endpoint, final Type param, @Nullable final OnCallFinishedListener<Type2> listener) {
+    public <Type, Type2> void postAsync(final String endpoint, final Type param, final Class<Type2> dataClass, @Nullable final OnCallFinishedListener<Type2> listener) {
         addTask(new Runnable() {
             @Override
             public void run() {
                 try {
-                    Type2 data = postInternal(endpoint, param);
+                    Type2 data = postInternal(endpoint, param, dataClass);
                     if (listener != null)
                         listener.onSuccess(data);
                 } catch (APIException e) {
@@ -154,11 +160,13 @@ public abstract class DataAPI<User> {
         });
     }
 
-    public <Type, Type2> Type2 post(final String endpoint, final Type param) throws APIException {
-        return postInternal(endpoint, param);
+    public <Type, Type2> Type2 post(final String endpoint, final Type param, Class<Type2> dataClass) throws APIException {
+        return postInternal(endpoint, param, dataClass);
     }
 
-    protected abstract <Type, Type2> Type2 postInternal(final String endpoint, Type param) throws APIException;
+    protected <Type, Type2> Type2 postInternal(final String endpoint, Type param, Class<Type2> dataClass) throws APIException {
+        throw new RuntimeException("Not implemented");
+    }
 
     public void signupAsync(final User user) {
         addTask(new Runnable() {
@@ -173,7 +181,9 @@ public abstract class DataAPI<User> {
         signupInternal(user);
     }
 
-    protected abstract void signupInternal(User user);
+    protected void signupInternal(User user) {
+        throw new RuntimeException("Not implemented");
+    }
 
     public void loginAsync(final String email, final String pass) {
         addTask(new Runnable() {
@@ -188,17 +198,23 @@ public abstract class DataAPI<User> {
         loginInternal(email, pass);
     }
 
-    protected abstract void loginInternal(String email, String pass);
-
-    public String saveBitmap(Bitmap bitmap) {
-        return saveBitmapInternal(bitmap);
+    protected void loginInternal(String email, String pass) {
+        throw new RuntimeException("Not implemented");
     }
 
-    protected abstract String saveBitmapInternal(Bitmap bitmap);
-
-    public Bitmap loadBitmap(String url) {
-        return loadBitmapInternal(url);
+    public String saveObject(Object object) {
+        return saveObjectInternal(object);
     }
 
-    protected abstract Bitmap loadBitmapInternal(String url);
+    protected String saveObjectInternal(Object object) {
+        throw new RuntimeException("Not implemented");
+    }
+
+    public Object loadObject(String url) {
+        return loadObjectInternal(url);
+    }
+
+    protected Object loadObjectInternal(String url) {
+        throw new RuntimeException("Not implemented");
+    }
 }
