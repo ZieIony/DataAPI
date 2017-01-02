@@ -1,49 +1,16 @@
 package tk.zielony.dataapi;
 
-import android.graphics.Bitmap;
 import android.support.annotation.Nullable;
+import android.util.Log;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
-import java.util.LinkedList;
-import java.util.Queue;
 
-/**
- * Created by Marcin on 2016-04-29.
- */
-public abstract class DataAPI<User> {
+public abstract class DataAPI {
 
     private static ObjectMapper mapper = new ObjectMapper();
-
-    private final Queue<Runnable> taskQueue = new LinkedList<>();
-    private Thread networkThread = new Thread() {
-        @Override
-        public void run() {
-            setDaemon(true);
-            while (true) {
-                Runnable r;
-                synchronized (taskQueue) {
-                    try {
-                        while (taskQueue.isEmpty())
-                            taskQueue.wait();
-                    } catch (InterruptedException e) {
-                        return;
-                    }
-                    r = taskQueue.remove();
-                    taskQueue.notify();
-                }
-                r.run();
-            }
-        }
-    };
-
-    protected User currentUser;
-
-    public DataAPI() {
-        networkThread.start();
-    }
 
     public static String toJson(Object obj) {
         try {
@@ -54,7 +21,7 @@ public abstract class DataAPI<User> {
         }
     }
 
-    public static <Type> Type fromJson(String json, Class<Type> klass) {
+    public static <RequestType> RequestType fromJson(String json, Class<RequestType> klass) {
         try {
             return mapper.readValue(json, klass);
         } catch (IOException e) {
@@ -63,158 +30,172 @@ public abstract class DataAPI<User> {
         }
     }
 
-    protected void addTask(Runnable runnable) {
-        synchronized (taskQueue) {
-            taskQueue.add(runnable);
-            taskQueue.notify();
-        }
-    }
-
-    public User getCurrentUser() {
-        return currentUser;
-    }
-
-    public <Type> void getAsync(final String endpoint, final Class<Type> dataClass, final OnCallFinishedListener<Type> listener) {
-        addTask(new Runnable() {
+    private void execute(final Runnable runnable) {
+        new Thread() {
             @Override
             public void run() {
-                try {
-                    listener.onSuccess(getInternal(endpoint, dataClass));
-                } catch (APIException e) {
+                runnable.run();
+            }
+        }.start();
+    }
+
+    // GET
+
+    public void getAsync(final String endpoint) {
+        getAsync(endpoint, String.class, null);
+    }
+
+    public <ResponseType> void getAsync(final String endpoint, final Class<ResponseType> responseClass) {
+        getAsync(endpoint, responseClass, null);
+    }
+
+    public void getAsync(final String endpoint, @Nullable final OnCallFinishedListener<String> listener) {
+        getAsync(endpoint, String.class, listener);
+    }
+
+    public <ResponseType> void getAsync(final String endpoint, final Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
+        execute(() -> {
+            try {
+                Log.i("request", "GET: " + endpoint);
+                ResponseType data = getInternal(endpoint, responseClass);
+                Log.i("success", "GET: " + endpoint + "\n" + toJson(data));
+                if (listener != null)
+                    listener.onSuccess(data);
+            } catch (Exception e) {
+                Log.i("error", "GET: " + endpoint, e);
+                if (listener != null)
                     listener.onError(e);
-                }
             }
         });
     }
 
-    public <Type> Type get(final String endpoint, Class<Type> dataClass) throws APIException {
-        return getInternal(endpoint, dataClass);
-
+    public String get(final String endpoint) throws Exception {
+        return get(endpoint, String.class);
     }
 
-    protected <Type2> Type2 getInternal(final String endpoint, Class<Type2> dataClass) throws APIException {
-        throw new RuntimeException("Not implemented");
+    public <ResponseType> ResponseType get(final String endpoint, Class<ResponseType> responseClass) throws Exception {
+        return getInternal(endpoint, responseClass);
     }
 
-    public <Type> void putAsync(final String endpoint, final Type param, @Nullable final OnCallFinishedListener<Type> listener) {
-        addTask(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Type data = putInternal(endpoint, param);
-                    if (listener != null)
-                        listener.onSuccess(data);
-                } catch (APIException e) {
-                    if (listener != null)
-                        listener.onError(e);
-                }
+    protected abstract <ResponseType> ResponseType getInternal(final String endpoint, Class<ResponseType> responseClass) throws Exception;
+
+    // PUT
+
+    public <RequestType> void putAsync(final String endpoint, final RequestType requestBody) {
+        putAsync(endpoint, requestBody, String.class, null);
+    }
+
+    public <RequestType, ResponseType> void putAsync(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) {
+        putAsync(endpoint, requestBody, responseClass, null);
+    }
+
+    public <RequestType> void putAsync(final String endpoint, final RequestType requestBody, @Nullable final OnCallFinishedListener<String> listener) {
+        putAsync(endpoint, requestBody, String.class, listener);
+    }
+
+    public <RequestType, ResponseType> void putAsync(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
+        execute(() -> {
+            try {
+                Log.i("request", "PUT: " + endpoint + "\n" + toJson(requestBody));
+                putInternal(endpoint, requestBody, responseClass);
+                Log.i("success", "PUT: " + endpoint);
+                if (listener != null)
+                    listener.onSuccess();
+            } catch (Exception e) {
+                Log.i("error", "PUT: " + endpoint, e);
+                if (listener != null)
+                    listener.onError(e);
             }
         });
     }
 
-    public <Type> Type put(final String endpoint, final Type param) throws APIException {
-        return putInternal(endpoint, param);
+    public <RequestType> String put(final String endpoint, final RequestType requestBody) throws Exception {
+        return put(endpoint, requestBody, String.class);
     }
 
-    public <Type> Type putInternal(final String endpoint, final Type param) throws APIException {
-        throw new RuntimeException("Not implemented");
+    public <RequestType, ResponseType> ResponseType put(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) throws Exception {
+        return putInternal(endpoint, requestBody, responseClass);
     }
 
-    public <Type> void deleteAsync(final String endpoint, @Nullable final OnCallFinishedListener<Type> listener) {
-        addTask(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    deleteInternal(endpoint);
-                    if (listener != null)
-                        listener.onSuccess(null);
-                } catch (APIException e) {
-                    if (listener != null)
-                        listener.onError(e);
-                }
+    protected abstract <RequestType, ResponseType> ResponseType putInternal(String endpoint, RequestType requestBody, Class<ResponseType> responseClass) throws Exception;
+
+    // DELETE
+
+    public void deleteAsync(final String endpoint) {
+        deleteAsync(endpoint, String.class, null);
+    }
+
+    public <ResponseType> void deleteAsync(final String endpoint, Class<ResponseType> responseClass) {
+        deleteAsync(endpoint, responseClass, null);
+    }
+
+    public void deleteAsync(final String endpoint, @Nullable final OnCallFinishedListener<String> listener) {
+        deleteAsync(endpoint, String.class, listener);
+    }
+
+    public <ResponseType> void deleteAsync(final String endpoint, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
+        execute(() -> {
+            try {
+                Log.i("request", "DELETE: " + endpoint);
+                deleteInternal(endpoint, responseClass);
+                Log.i("success", "DELETE: " + endpoint);
+                if (listener != null)
+                    listener.onSuccess(null);
+            } catch (Exception e) {
+                Log.i("error", "DELETE: " + endpoint, e);
+                if (listener != null)
+                    listener.onError(e);
             }
         });
     }
 
-    public void delete(final String endpoint) throws APIException {
-        deleteInternal(endpoint);
+    public String delete(final String endpoint) throws Exception {
+        return delete(endpoint, String.class);
     }
 
-    protected void deleteInternal(final String endpoint) throws APIException {
-        throw new RuntimeException("Not implemented");
+    public <ResponseType> ResponseType delete(final String endpoint, Class<ResponseType> responseClass) throws Exception {
+        return deleteInternal(endpoint, responseClass);
     }
 
-    public <Type, Type2> void postAsync(final String endpoint, final Type param, final Class<Type2> dataClass, @Nullable final OnCallFinishedListener<Type2> listener) {
-        addTask(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Type2 data = postInternal(endpoint, param, dataClass);
-                    if (listener != null)
-                        listener.onSuccess(data);
-                } catch (APIException e) {
-                    if (listener != null)
-                        listener.onError(e);
-                }
+    protected abstract <ResponseType> ResponseType deleteInternal(String endpoint, Class<ResponseType> responseClass) throws Exception;
+
+    // POST
+
+    public <RequestType> void postAsync(final String endpoint, final RequestType requestBody) {
+        postAsync(endpoint, requestBody, String.class, null);
+    }
+
+    public <RequestType, ResponseType> void postAsync(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) {
+        postAsync(endpoint, requestBody, responseClass, null);
+    }
+
+    public <RequestType> void postAsync(final String endpoint, final RequestType requestBody, @Nullable final OnCallFinishedListener<String> listener) {
+        postAsync(endpoint, requestBody, String.class, listener);
+    }
+
+    public <RequestType, ResponseType> void postAsync(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
+        execute(() -> {
+            try {
+                Log.i("request", "POST: " + endpoint + "\n" + toJson(requestBody));
+                ResponseType data = postInternal(endpoint, requestBody, responseClass);
+                Log.i("success", "POST: " + endpoint + "\n" + toJson(data));
+                if (listener != null)
+                    listener.onSuccess(data);
+            } catch (Exception e) {
+                Log.i("error", "POST: " + endpoint, e);
+                if (listener != null)
+                    listener.onError(e);
             }
         });
     }
 
-    public <Type, Type2> Type2 post(final String endpoint, final Type param, Class<Type2> dataClass) throws APIException {
-        return postInternal(endpoint, param, dataClass);
+    public <RequestType> String post(final String endpoint, final RequestType requestBody) throws Exception {
+        return post(endpoint, requestBody, String.class);
     }
 
-    protected <Type, Type2> Type2 postInternal(final String endpoint, Type param, Class<Type2> dataClass) throws APIException {
-        throw new RuntimeException("Not implemented");
+    public <RequestType, ResponseType> ResponseType post(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) throws Exception {
+        return postInternal(endpoint, requestBody, responseClass);
     }
 
-    public void signupAsync(final User user) {
-        addTask(new Runnable() {
-            @Override
-            public void run() {
-                signupInternal(user);
-            }
-        });
-    }
-
-    public void signup(final User user) {
-        signupInternal(user);
-    }
-
-    protected void signupInternal(User user) {
-        throw new RuntimeException("Not implemented");
-    }
-
-    public void loginAsync(final String email, final String pass) {
-        addTask(new Runnable() {
-            @Override
-            public void run() {
-                loginInternal(email, pass);
-            }
-        });
-    }
-
-    public void login(String email, String pass) {
-        loginInternal(email, pass);
-    }
-
-    protected void loginInternal(String email, String pass) {
-        throw new RuntimeException("Not implemented");
-    }
-
-    public String saveObject(Object object) {
-        return saveObjectInternal(object);
-    }
-
-    protected String saveObjectInternal(Object object) {
-        throw new RuntimeException("Not implemented");
-    }
-
-    public Object loadObject(String url) {
-        return loadObjectInternal(url);
-    }
-
-    protected Object loadObjectInternal(String url) {
-        throw new RuntimeException("Not implemented");
-    }
+    protected abstract <RequestType, ResponseType> ResponseType postInternal(final String endpoint, RequestType requestBody, Class<ResponseType> responseClass) throws Exception;
 }
