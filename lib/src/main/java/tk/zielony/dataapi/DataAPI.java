@@ -1,83 +1,38 @@
 package tk.zielony.dataapi;
 
+import android.content.Context;
 import android.support.annotation.Nullable;
 import android.util.Log;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 
 import org.springframework.http.HttpMethod;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
 public abstract class DataAPI {
 
-    private static final int DEFAULT_CORE_THREADS = 2;
-    private static final int DEFAULT_CONNECT_TIMEOUT = 1000;
-    private static final int DEFAULT_RETRIES = 3;
-    private static final int DEFAULT_READ_TIMEOUT = 5000;
+    protected static final String SAVED_RESPONSES_FILENAME = "cache";
 
-    private static ObjectMapper mapper = new ObjectMapper();
-
-    private int coreThreads;
-    private int connectTimeout;
-    private int readTimeout;
-    private int retries;
+    protected static ObjectMapper mapper = new ObjectMapper().configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
 
     private ScheduledExecutorService executor;
+    private Configuration configuration;
 
-    private class Task<RequestBodyType, ResponseBodyType> implements Runnable {
-        private final HttpMethod method;
-        private final String endpoint;
-        RequestBodyType requestBody;
-        private Class<ResponseBodyType> responseBodyClass;
-        private int retry = 0;
-        private OnCallFinishedListener<ResponseBodyType> listener;
-
-        public Task(String endpoint, HttpMethod method, RequestBodyType requestBody, Class<ResponseBodyType> responseBodyClass, OnCallFinishedListener<ResponseBodyType> listener) {
-            this.endpoint = endpoint;
-            this.method = method;
-            this.requestBody = requestBody;
-            this.responseBodyClass = responseBodyClass;
-            this.listener = listener;
-        }
-
-        @Override
-        public void run() {
-            try {
-                Log.i("request", method + ": " + endpoint);
-                if (responseBodyClass != Void.class) {
-                    ResponseBodyType data = executeRequest(endpoint, method, requestBody, responseBodyClass);
-                    Log.i("success", method + ": " + endpoint + "\n" + toJson(data));
-                    if (listener != null)
-                        listener.onSuccess(data);
-                } else {
-                    executeRequest(endpoint, method, requestBody, Void.class);
-                    Log.i("success", method + ": " + endpoint);
-                    if (listener != null)
-                        listener.onSuccess();
-                }
-            } catch (TimeoutException te) {
-                if (retry < retries) {
-                    Log.i("retrying", method + ": " + endpoint);
-                    retry++;
-                    if (listener != null)
-                        listener.onRetry();
-                    executor.execute(this);
-                } else {
-                    Log.i("timeout", method + ": " + endpoint);
-                    if (listener != null)
-                        listener.onTimeout();
-                }
-            } catch (Exception e) {
-                Log.i("error", method + ": " + endpoint, e);
-                if (listener != null)
-                    listener.onError(e);
-            }
-        }
-    }
+    protected Map<String, CacheEntry> cache = new HashMap<>();
+    protected DataOutputStream responseOutputStream;
 
     public static String toJson(Object obj) {
         try {
@@ -92,110 +47,158 @@ public abstract class DataAPI {
         try {
             return mapper.readValue(json, klass);
         } catch (IOException e) {
-            Log.w("to json", e);
+            Log.w("from json", e);
             return null;
         }
     }
 
     public DataAPI() {
-        this(DEFAULT_CORE_THREADS, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT, DEFAULT_RETRIES);
+        this(new Configuration());
     }
 
-    public DataAPI(int coreThreads, int connectTimeout, int readTimeout, int retries) {
-        executor = Executors.newScheduledThreadPool(coreThreads);
-        this.coreThreads = coreThreads;
-        this.connectTimeout = connectTimeout;
-        this.readTimeout = readTimeout;
-        this.retries = retries;
+    public DataAPI(Configuration configuration) {
+        this.configuration = configuration;
+        executor = Executors.newScheduledThreadPool(configuration.getCoreThreads());
     }
 
-    public int getCoreThreads() {
-        return coreThreads;
+    public Configuration getConfiguration() {
+        return configuration;
     }
 
-    public int getConnectTimeout() {
-        return connectTimeout;
+    public void saveCache(Context context) {
+        try {
+            responseOutputStream = new DataOutputStream(new FileOutputStream(new File(context.getFilesDir(), SAVED_RESPONSES_FILENAME)));
+            for (Map.Entry<String, CacheEntry> entry : cache.entrySet())
+                entry.getValue().write(responseOutputStream);
+            responseOutputStream.close();
+            responseOutputStream = null;
+        } catch (IOException e) {
+        }
     }
 
-    public int getReadTimeout() {
-        return readTimeout;
+    public void loadCache(Context context) {
+        try {
+            DataInputStream responseInputStream = new DataInputStream(new FileInputStream(new File(context.getFilesDir(), SAVED_RESPONSES_FILENAME)));
+            while (true) {
+                String key = responseInputStream.readUTF();
+                CacheEntry cacheEntry = new CacheEntry();
+                cacheEntry.read(responseInputStream);
+                cache.put(key, cacheEntry);
+            }
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
-    public int getRetries() {
-        return retries;
-    }
 
     // GET
 
-    public void get(final String endpoint) {
-        get(endpoint, String.class, null);
+    public RequestTask<Void, String> get(final String endpoint) {
+        return get(endpoint, String.class, null);
     }
 
-    public <ResponseType> void get(final String endpoint, final Class<ResponseType> responseClass) {
-        get(endpoint, responseClass, null);
+    public <ResponseType> RequestTask<Void, ResponseType> get(final String endpoint, final Class<ResponseType> responseClass) {
+        return get(endpoint, responseClass, null);
     }
 
-    public void get(final String endpoint, @Nullable final OnCallFinishedListener<String> listener) {
-        get(endpoint, String.class, listener);
+    public RequestTask<Void, String> get(final String endpoint, @Nullable final OnCallFinishedListener<String> listener) {
+        return get(endpoint, String.class, listener);
     }
 
-    public <ResponseType> void get(final String endpoint, final Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
-        executor.execute(new Task<Void, ResponseType>(endpoint, HttpMethod.GET, null, responseClass, listener));
+    public <ResponseType> RequestTask<Void, ResponseType> get(final String endpoint, final Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
+        RequestTask<Void, ResponseType> task = new RequestTask<>(this, endpoint, HttpMethod.GET, null, responseClass, listener);
+        executor.execute(task);
+        return task;
     }
 
     // PUT
 
-    public <RequestType> void put(final String endpoint, final RequestType requestBody) {
-        put(endpoint, requestBody, String.class, null);
+    public <RequestType> RequestTask<RequestType, String> put(final String endpoint, final RequestType requestBody) {
+        return put(endpoint, requestBody, String.class, null);
     }
 
-    public <RequestType, ResponseType> void put(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) {
-        put(endpoint, requestBody, responseClass, null);
+    public <RequestType, ResponseType> RequestTask<RequestType, ResponseType> put(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) {
+        return put(endpoint, requestBody, responseClass, null);
     }
 
-    public <RequestType> void put(final String endpoint, final RequestType requestBody, @Nullable final OnCallFinishedListener<String> listener) {
-        put(endpoint, requestBody, String.class, listener);
+    public <RequestType> RequestTask<RequestType, String> put(final String endpoint, final RequestType requestBody, @Nullable final OnCallFinishedListener<String> listener) {
+        return put(endpoint, requestBody, String.class, listener);
     }
 
-    public <RequestType, ResponseType> void put(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
-        executor.execute(new Task<>(endpoint, HttpMethod.PUT, requestBody, responseClass, listener));
+    public <RequestType, ResponseType> RequestTask<RequestType, ResponseType> put(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
+        RequestTask<RequestType, ResponseType> task = new RequestTask<>(this, endpoint, HttpMethod.PUT, requestBody, responseClass, listener);
+        executor.execute(task);
+        return task;
     }
 
     // DELETE
 
-    public void delete(final String endpoint) {
-        delete(endpoint, String.class, null);
+    public RequestTask<Object, String> delete(final String endpoint) {
+        return delete(endpoint, String.class, null);
     }
 
-    public <ResponseType> void delete(final String endpoint, Class<ResponseType> responseClass) {
-        delete(endpoint, responseClass, null);
+    public <ResponseType> RequestTask<Object, ResponseType> delete(final String endpoint, Class<ResponseType> responseClass) {
+        return delete(endpoint, responseClass, null);
     }
 
-    public void delete(final String endpoint, @Nullable final OnCallFinishedListener<String> listener) {
-        delete(endpoint, String.class, listener);
+    public RequestTask<Object, String> delete(final String endpoint, @Nullable final OnCallFinishedListener<String> listener) {
+        return delete(endpoint, String.class, listener);
     }
 
-    public <ResponseType> void delete(final String endpoint, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
-        executor.execute(new Task<>(endpoint, HttpMethod.DELETE, null, responseClass, listener));
+    public <ResponseType> RequestTask<Object, ResponseType> delete(final String endpoint, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
+        RequestTask<Object, ResponseType> task = new RequestTask<>(this, endpoint, HttpMethod.DELETE, null, responseClass, listener);
+        executor.execute(task);
+        return task;
     }
 
     // POST
 
-    public <RequestType> void post(final String endpoint, final RequestType requestBody) {
-        post(endpoint, requestBody, String.class, null);
+    public <RequestType> RequestTask<RequestType, String> post(final String endpoint, final RequestType requestBody) {
+        return post(endpoint, requestBody, String.class, null);
     }
 
-    public <RequestType, ResponseType> void post(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) {
-        post(endpoint, requestBody, responseClass, null);
+    public <RequestType, ResponseType> RequestTask<RequestType, ResponseType> post(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) {
+        return post(endpoint, requestBody, responseClass, null);
     }
 
-    public <RequestType> void post(final String endpoint, final RequestType requestBody, @Nullable final OnCallFinishedListener<String> listener) {
-        post(endpoint, requestBody, String.class, listener);
+    public <RequestType> RequestTask<RequestType, String> post(final String endpoint, final RequestType requestBody, @Nullable final OnCallFinishedListener<String> listener) {
+        return post(endpoint, requestBody, String.class, listener);
     }
 
-    public <RequestType, ResponseType> void post(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
-        executor.execute(new Task<>(endpoint, HttpMethod.POST, requestBody, responseClass, listener));
+    public <RequestType, ResponseType> RequestTask<RequestType, ResponseType> post(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
+        RequestTask<RequestType, ResponseType> task = new RequestTask<>(this, endpoint, HttpMethod.POST, requestBody, responseClass, listener);
+        executor.execute(task);
+        return task;
     }
 
-    protected abstract <RequestBodyType, ResponseBodyType> ResponseBodyType executeRequest(String endpoint, HttpMethod method, RequestBodyType requestBody, Class<ResponseBodyType> responseBodyClass);
+    protected <RequestBodyType, ResponseBodyType> ResponseBodyType executeRequest(String endpoint, HttpMethod method, RequestBodyType requestBody, Class<ResponseBodyType> responseBodyClass) {
+        String key = endpoint + method;
+        CacheEntry cacheEntry = cache.get(key);
+        if (cacheEntry != null) {
+            if (cacheEntry.time - System.currentTimeMillis() < configuration.getCacheTimeout())
+                return fromJson(cacheEntry.response, responseBodyClass);
+            if (configuration.getCacheStrategy() != CacheStrategy.DEMO)
+                cache.remove(key);
+        }
+        String response = executeRequestInternal(endpoint, method, requestBody);
+        if (configuration.getCacheStrategy() != CacheStrategy.NONE && !cache.containsKey(key))
+            cache.put(key, new CacheEntry(endpoint, method, response));
+        return fromJson(response, responseBodyClass);
+    }
+
+    protected abstract <RequestBodyType> String executeRequestInternal(String endpoint, HttpMethod method, RequestBodyType requestBody);
+
+    <RequestBodyType, ResponseBodyType> void execute(RequestTask<RequestBodyType, ResponseBodyType> task) {
+        executor.execute(task);
+    }
+
+    public void clearCache() {
+        cache.clear();
+    }
+
+    public void clearCache(String endpoint, HttpMethod method) {
+        cache.remove(endpoint + method);
+    }
 }

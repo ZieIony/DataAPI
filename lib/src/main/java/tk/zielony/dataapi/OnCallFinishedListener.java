@@ -7,7 +7,7 @@ public interface OnCallFinishedListener<Type> {
 
     void onRetry();
 
-    void onError(Exception e);
+    void onError(ApiError e);
 
     void onTimeout();
 }

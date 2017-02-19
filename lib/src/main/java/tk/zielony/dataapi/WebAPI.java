@@ -1,5 +1,7 @@
 package tk.zielony.dataapi;
 
+import com.fasterxml.jackson.databind.SerializationFeature;
+
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -20,13 +22,11 @@ public class WebAPI extends DataAPI {
     private RestTemplate restTemplate;
 
     public WebAPI(String apiUrl) {
-        this.apiUrl = apiUrl;
-
-        init();
+        this(apiUrl, new Configuration());
     }
 
-    public WebAPI(String apiUrl, int coreThreads, int connectTimeout, int readTimeout, int retries) {
-        super(coreThreads, connectTimeout, readTimeout, retries);
+    public WebAPI(String apiUrl, Configuration configuration) {
+        super(configuration);
 
         this.apiUrl = apiUrl;
 
@@ -35,10 +35,12 @@ public class WebAPI extends DataAPI {
 
     private void init() {
         SimpleClientHttpRequestFactory s = new SimpleClientHttpRequestFactory();
-        s.setConnectTimeout(getConnectTimeout());
-        s.setReadTimeout(getReadTimeout());
+        s.setConnectTimeout(getConfiguration().getConnectTimeout());
+        s.setReadTimeout(getConfiguration().getReadTimeout());
         restTemplate = new RestTemplate(s);
-        restTemplate.getMessageConverters().add(new MappingJackson2HttpMessageConverter());
+        MappingJackson2HttpMessageConverter messageConverter = new MappingJackson2HttpMessageConverter();
+        messageConverter.getObjectMapper().configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
+        restTemplate.getMessageConverters().add(messageConverter);
     }
 
     public void setHeader(String header, String value) {
@@ -49,12 +51,13 @@ public class WebAPI extends DataAPI {
         return apiUrl;
     }
 
-    protected <RequestBodyType, ResponseBodyType> ResponseBodyType executeRequest(String endpoint, HttpMethod method, RequestBodyType requestBody, Class<ResponseBodyType> responseBodyClass) {
+    @Override
+    protected <RequestBodyType> String executeRequestInternal(String endpoint, HttpMethod method, RequestBodyType requestBody) {
         String url = apiUrl + endpoint;
         HttpEntity<RequestBodyType> request = new HttpEntity<>(requestBody, headers);
 
         try {
-            ResponseEntity<ResponseBodyType> responseEntity = restTemplate.exchange(url, method, request, responseBodyClass);
+            ResponseEntity<String> responseEntity = restTemplate.exchange(url, method, request, String.class);
             return responseEntity.getBody();
         } catch (Exception e) {
             if (e instanceof ResourceAccessException && e.getCause() instanceof SocketTimeoutException)

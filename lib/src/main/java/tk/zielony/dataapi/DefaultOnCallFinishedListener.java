@@ -1,6 +1,6 @@
 package tk.zielony.dataapi;
 
-public class DefaultOnCallFinishedListener<Type> implements OnCallFinishedListener<Type>{
+public class DefaultOnCallFinishedListener<Type> implements OnCallFinishedListener<Type> {
     @Override
     public void onSuccess() {
 
@@ -17,7 +17,7 @@ public class DefaultOnCallFinishedListener<Type> implements OnCallFinishedListen
     }
 
     @Override
-    public void onError(Exception e) {
+    public void onError(ApiError e) {
 
     }
 
