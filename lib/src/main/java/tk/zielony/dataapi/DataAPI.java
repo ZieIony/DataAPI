@@ -1,7 +1,7 @@
 package tk.zielony.dataapi;
 
 import android.content.Context;
-import android.support.annotation.Nullable;
+import android.os.Handler;
 import android.util.Log;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -10,17 +10,22 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 
 import org.springframework.http.HttpMethod;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+
+import io.reactivex.Observable;
+import io.reactivex.disposables.CompositeDisposable;
+import io.reactivex.schedulers.Schedulers;
 
 public abstract class DataAPI {
 
@@ -29,10 +34,11 @@ public abstract class DataAPI {
     protected static ObjectMapper mapper = new ObjectMapper().configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
 
     private ScheduledExecutorService executor;
+    private Handler handler = new Handler();
     private Configuration configuration;
 
-    protected Map<String, CacheEntry> cache = new HashMap<>();
-    protected DataOutputStream responseOutputStream;
+    protected Map<String, Response> cache = new HashMap<>();
+    private CompositeDisposable disposables = new CompositeDisposable();
 
     public static String toJson(Object obj) {
         try {
@@ -67,21 +73,20 @@ public abstract class DataAPI {
 
     public void saveCache(Context context) {
         try {
-            responseOutputStream = new DataOutputStream(new FileOutputStream(new File(context.getFilesDir(), SAVED_RESPONSES_FILENAME)));
-            for (Map.Entry<String, CacheEntry> entry : cache.entrySet())
+            ObjectOutputStream responseOutputStream = new ObjectOutputStream(new FileOutputStream(new File(context.getFilesDir(), SAVED_RESPONSES_FILENAME)));
+            for (Map.Entry<String, Response> entry : cache.entrySet())
                 entry.getValue().write(responseOutputStream);
             responseOutputStream.close();
-            responseOutputStream = null;
         } catch (IOException e) {
         }
     }
 
     public void loadCache(Context context) {
         try {
-            DataInputStream responseInputStream = new DataInputStream(new FileInputStream(new File(context.getFilesDir(), SAVED_RESPONSES_FILENAME)));
+            ObjectInputStream responseInputStream = new ObjectInputStream(new FileInputStream(new File(context.getFilesDir(), SAVED_RESPONSES_FILENAME)));
             while (true) {
                 String key = responseInputStream.readUTF();
-                CacheEntry cacheEntry = new CacheEntry();
+                Response cacheEntry = new Response();
                 cacheEntry.read(responseInputStream);
                 cache.put(key, cacheEntry);
             }
@@ -89,110 +94,53 @@ public abstract class DataAPI {
             e.printStackTrace();
         } catch (IOException e) {
             e.printStackTrace();
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
         }
     }
 
-
-    // GET
-
-    public RequestTask<Void, String> get(final String endpoint) {
-        return get(endpoint, String.class, null);
+    public void runOnUIThread(Runnable runnable) {
+        handler.post(runnable);
     }
 
-    public <ResponseType> RequestTask<Void, ResponseType> get(final String endpoint, final Class<ResponseType> responseClass) {
-        return get(endpoint, responseClass, null);
+    public <ResponseBodyType extends Serializable> Observable<Response<ResponseBodyType>> get(final String endpoint, final Class<ResponseBodyType> responseClass) {
+        return reactiveRequest(new Request<>(endpoint, HttpMethod.GET, null, responseClass));
     }
 
-    public RequestTask<Void, String> get(final String endpoint, @Nullable final OnCallFinishedListener<String> listener) {
-        return get(endpoint, String.class, listener);
+    public <RequestBodyType, ResponseBodyType extends Serializable> Observable<Response<ResponseBodyType>> put(final String endpoint, final RequestBodyType requestBody, Class<ResponseBodyType> responseClass) {
+        return reactiveRequest(new Request<>(endpoint, HttpMethod.PUT, requestBody, responseClass));
     }
 
-    public <ResponseType> RequestTask<Void, ResponseType> get(final String endpoint, final Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
-        RequestTask<Void, ResponseType> task = new RequestTask<>(this, endpoint, HttpMethod.GET, null, responseClass, listener);
-        executor.execute(task);
-        return task;
+    public <ResponseBodyType extends Serializable> Observable<Response<ResponseBodyType>> delete(final String endpoint, Class<ResponseBodyType> responseClass) {
+        return reactiveRequest(new Request<>(endpoint, HttpMethod.DELETE, null, responseClass));
     }
 
-    // PUT
-
-    public <RequestType> RequestTask<RequestType, String> put(final String endpoint, final RequestType requestBody) {
-        return put(endpoint, requestBody, String.class, null);
+    public <RequestBodyType, ResponseBodyType extends Serializable> Observable<Response<ResponseBodyType>> post(final String endpoint, final RequestBodyType requestBody, Class<ResponseBodyType> responseClass) {
+        return reactiveRequest(new Request<>(endpoint, HttpMethod.POST, requestBody, responseClass));
     }
 
-    public <RequestType, ResponseType> RequestTask<RequestType, ResponseType> put(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) {
-        return put(endpoint, requestBody, responseClass, null);
-    }
-
-    public <RequestType> RequestTask<RequestType, String> put(final String endpoint, final RequestType requestBody, @Nullable final OnCallFinishedListener<String> listener) {
-        return put(endpoint, requestBody, String.class, listener);
-    }
-
-    public <RequestType, ResponseType> RequestTask<RequestType, ResponseType> put(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
-        RequestTask<RequestType, ResponseType> task = new RequestTask<>(this, endpoint, HttpMethod.PUT, requestBody, responseClass, listener);
-        executor.execute(task);
-        return task;
-    }
-
-    // DELETE
-
-    public RequestTask<Object, String> delete(final String endpoint) {
-        return delete(endpoint, String.class, null);
-    }
-
-    public <ResponseType> RequestTask<Object, ResponseType> delete(final String endpoint, Class<ResponseType> responseClass) {
-        return delete(endpoint, responseClass, null);
-    }
-
-    public RequestTask<Object, String> delete(final String endpoint, @Nullable final OnCallFinishedListener<String> listener) {
-        return delete(endpoint, String.class, listener);
-    }
-
-    public <ResponseType> RequestTask<Object, ResponseType> delete(final String endpoint, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
-        RequestTask<Object, ResponseType> task = new RequestTask<>(this, endpoint, HttpMethod.DELETE, null, responseClass, listener);
-        executor.execute(task);
-        return task;
-    }
-
-    // POST
-
-    public <RequestType> RequestTask<RequestType, String> post(final String endpoint, final RequestType requestBody) {
-        return post(endpoint, requestBody, String.class, null);
-    }
-
-    public <RequestType, ResponseType> RequestTask<RequestType, ResponseType> post(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass) {
-        return post(endpoint, requestBody, responseClass, null);
-    }
-
-    public <RequestType> RequestTask<RequestType, String> post(final String endpoint, final RequestType requestBody, @Nullable final OnCallFinishedListener<String> listener) {
-        return post(endpoint, requestBody, String.class, listener);
-    }
-
-    public <RequestType, ResponseType> RequestTask<RequestType, ResponseType> post(final String endpoint, final RequestType requestBody, Class<ResponseType> responseClass, @Nullable final OnCallFinishedListener<ResponseType> listener) {
-        RequestTask<RequestType, ResponseType> task = new RequestTask<>(this, endpoint, HttpMethod.POST, requestBody, responseClass, listener);
-        executor.execute(task);
-        return task;
-    }
-
-    protected <RequestBodyType, ResponseBodyType> ResponseBodyType executeRequest(String endpoint, HttpMethod method, RequestBodyType requestBody, Class<ResponseBodyType> responseBodyClass) {
-        String key = endpoint + method;
-        CacheEntry cacheEntry = cache.get(key);
-        if (cacheEntry != null) {
-            if (cacheEntry.time - System.currentTimeMillis() < configuration.getCacheTimeout())
-                return fromJson(cacheEntry.response, responseBodyClass);
+    protected <RequestBodyType, ResponseBodyType extends Serializable> Response<ResponseBodyType> executeRequest(Request<RequestBodyType, ResponseBodyType> request) {
+        String key = request.getMethod() + request.getEndpoint();
+        Response<ResponseBodyType> response = cache.get(key);
+        if (response != null) {
+            if (response.getTime() - System.currentTimeMillis() < configuration.getCacheTimeout())
+                return response;
             if (configuration.getCacheStrategy() != CacheStrategy.DEMO)
                 cache.remove(key);
         }
-        String response = executeRequestInternal(endpoint, method, requestBody);
-        if (configuration.getCacheStrategy() != CacheStrategy.NONE && !cache.containsKey(key))
-            cache.put(key, new CacheEntry(endpoint, method, response));
-        return fromJson(response, responseBodyClass);
+        response = executeRequestInternal(request);
+        if (configuration.getCacheStrategy() != CacheStrategy.NONE && response.isSuccess() && !cache.containsKey(key))
+            cache.put(key, response);
+        return response;
     }
 
-    protected abstract <RequestBodyType> String executeRequestInternal(String endpoint, HttpMethod method, RequestBodyType requestBody);
-
-    <RequestBodyType, ResponseBodyType> void execute(RequestTask<RequestBodyType, ResponseBodyType> task) {
-        executor.execute(task);
+    private <RequestBodyType, ResponseBodyType extends Serializable> Observable<Response<ResponseBodyType>> reactiveRequest(Request<RequestBodyType, ResponseBodyType> request) {
+        return Observable.create(new RequestObservable<>(this, request))
+                .subscribeOn(Schedulers.from(executor))
+                .retryWhen(new RetryObservable(configuration.getRetries()));
     }
+
+    protected abstract <RequestBodyType, ResponseBodyType extends Serializable> Response<ResponseBodyType> executeRequestInternal(Request<RequestBodyType, ResponseBodyType> request);
 
     public void clearCache() {
         cache.clear();
@@ -200,5 +148,9 @@ public abstract class DataAPI {
 
     public void clearCache(String endpoint, HttpMethod method) {
         cache.remove(endpoint + method);
+    }
+
+    public void cancelRequests() {
+        disposables.clear();
     }
 }

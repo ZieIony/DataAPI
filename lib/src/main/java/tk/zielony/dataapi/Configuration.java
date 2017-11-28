@@ -3,7 +3,7 @@ package tk.zielony.dataapi;
 public class Configuration {
     private static final int DEFAULT_CORE_THREADS = 2;
     private static final int DEFAULT_CONNECT_TIMEOUT = 1000;
-    private static final int DEFAULT_RETRIES = 3;
+    private static final int DEFAULT_RETRIES = 2;
     private static final int DEFAULT_READ_TIMEOUT = 5000;
     private static final long DEFAULT_CACHE_TIMEOUT = 1000 * 60;
 

@@ -4,14 +4,12 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
-import java.net.SocketTimeoutException;
+import java.io.Serializable;
 import java.util.Collections;
 
 public class WebAPI extends DataAPI {
@@ -51,18 +49,14 @@ public class WebAPI extends DataAPI {
         return apiUrl;
     }
 
-    @Override
-    protected <RequestBodyType> String executeRequestInternal(String endpoint, HttpMethod method, RequestBodyType requestBody) {
-        String url = apiUrl + endpoint;
-        HttpEntity<RequestBodyType> request = new HttpEntity<>(requestBody, headers);
+    static int attempts = 0;
 
-        try {
-            ResponseEntity<String> responseEntity = restTemplate.exchange(url, method, request, String.class);
-            return responseEntity.getBody();
-        } catch (Exception e) {
-            if (e instanceof ResourceAccessException && e.getCause() instanceof SocketTimeoutException)
-                throw new TimeoutException();
-            throw e;
-        }
+    @Override
+    protected <RequestBodyType, ResponseBodyType extends Serializable> Response<ResponseBodyType> executeRequestInternal(Request<RequestBodyType, ResponseBodyType> request) {
+        String url = apiUrl + request.getEndpoint();
+        HttpEntity<RequestBodyType> requestEntity = new HttpEntity<>(request.getBody(), headers);
+
+        ResponseEntity<ResponseBodyType> responseEntity = restTemplate.exchange(url, request.getMethod(), requestEntity, request.getResponseBodyClass());
+        return new Response<>(request.getMethod(), request.getEndpoint(), responseEntity.getBody(), responseEntity.getStatusCode());
     }
 }
