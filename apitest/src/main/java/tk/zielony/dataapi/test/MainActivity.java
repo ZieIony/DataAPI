@@ -3,8 +3,9 @@ package tk.zielony.dataapi.test;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.widget.TextView;
 
-import io.reactivex.disposables.CompositeDisposable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.observers.DisposableObserver;
 import tk.zielony.dataapi.CacheStrategy;
 import tk.zielony.dataapi.Configuration;
@@ -13,7 +14,6 @@ import tk.zielony.dataapi.WebAPI;
 
 public class MainActivity extends AppCompatActivity {
     WebAPI webAPI;
-    CompositeDisposable disposables = new CompositeDisposable();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -24,22 +24,26 @@ public class MainActivity extends AppCompatActivity {
         configuration.setCacheStrategy(CacheStrategy.NONE);
         webAPI = new WebAPI("https://jsonplaceholder.typicode.com", configuration);
 
-        findViewById(R.id.button).setOnClickListener(view -> disposables.add(webAPI.get("/posts", String.class).subscribeWith(new DisposableObserver<Response<String>>() {
-            @Override
-            public void onNext(Response<String> stringResponse) {
-                Log.e("test", "next");
-            }
+        TextView tv = findViewById(R.id.textView);
 
-            @Override
-            public void onError(Throwable e) {
-                Log.e("test", "error");
-            }
+        findViewById(R.id.button).setOnClickListener(view -> webAPI.get("/posts", String.class)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeWith(new DisposableObserver<Response<String>>() {
+                    @Override
+                    public void onNext(Response<String> stringResponse) {
+                        tv.setText(stringResponse.getData());
+                    }
 
-            @Override
-            public void onComplete() {
-                Log.e("test", "complete");
-            }
-        })));
+                    @Override
+                    public void onError(Throwable e) {
+                        Log.e("test", "error");
+                    }
+
+                    @Override
+                    public void onComplete() {
+                        Log.e("test", "complete");
+                    }
+                }));
     }
 
     @Override

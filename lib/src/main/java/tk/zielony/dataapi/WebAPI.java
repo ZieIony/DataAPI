@@ -49,8 +49,6 @@ public class WebAPI extends DataAPI {
         return apiUrl;
     }
 
-    static int attempts = 0;
-
     @Override
     protected <RequestBodyType, ResponseBodyType extends Serializable> Response<ResponseBodyType> executeRequestInternal(Request<RequestBodyType, ResponseBodyType> request) {
         String url = apiUrl + request.getEndpoint();

@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -135,8 +136,14 @@ public abstract class DataAPI {
     }
 
     private <RequestBodyType, ResponseBodyType extends Serializable> Observable<Response<ResponseBodyType>> reactiveRequest(Request<RequestBodyType, ResponseBodyType> request) {
-        return Observable.create(new RequestObservable<>(this, request))
+        return Observable.just(request)
                 .subscribeOn(Schedulers.from(executor))
+                .map(r -> {
+                    Response<ResponseBodyType> response = executeRequest(r);
+                    if (response.getCode() != HttpStatus.OK)
+                        throw new RequestException(null, request);
+                    return response;
+                })
                 .retryWhen(new RetryObservable(configuration.getRetries()));
     }
 

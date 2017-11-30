@@ -5,6 +5,7 @@ import io.reactivex.functions.Function;
 
 class RetryObservable implements Function<Observable<? extends Throwable>, Observable<?>> {
 
+    int retries = 1;
     private int maxRetries;
 
     RetryObservable(int maxRetries) {
@@ -14,13 +15,10 @@ class RetryObservable implements Function<Observable<? extends Throwable>, Obser
     @Override
     public Observable<?> apply(final Observable<? extends Throwable> errors) throws Exception {
         return errors.flatMap(throwable -> {
-            if (!(throwable instanceof RequestException))
+            if (retries > maxRetries)
                 return Observable.error(throwable);
 
-            RequestException requestException = (RequestException) throwable;
-            if (requestException.getAttempt() > maxRetries)
-                return Observable.error(throwable);
-
+            retries++;
             return Observable.just(throwable);
         });
     }
